@@ -1,3 +1,5 @@
+import * as authApi from "@/lib/api/auth";
+import type { Session, User } from "@supabase/supabase-js";
 import {
   createContext,
   useCallback,
@@ -6,9 +8,7 @@ import {
   useMemo,
   useState,
   type ReactNode,
-} from 'react';
-import type { Session, User } from '@supabase/supabase-js';
-import * as authApi from '@/lib/api/auth';
+} from "react";
 
 interface AuthContextValue {
   session: Session | null;
@@ -55,6 +55,6 @@ export function AuthProvider({ children }: { children: ReactNode }): ReactNode {
 
 export function useAuth() {
   const ctx = useContext(AuthContext);
-  if (!ctx) throw new Error('useAuth must be used within AuthProvider');
+  if (!ctx) throw new Error("useAuth must be used within AuthProvider");
   return ctx;
 }

@@ -2,9 +2,9 @@ import "jsr:@supabase/functions-js/edge-runtime.d.ts";
 import { createClient } from "jsr:@supabase/supabase-js@2";
 import { GoogleGenerativeAI } from "npm:@google/generative-ai@0.21.0";
 import { corsHeaders, handleCors } from "../_shared/cors.ts";
-import { GenerateWorkoutRequest, WorkoutProgram } from "./types.ts";
+import { EXERCISES_DB, validateExerciseUids } from "./exercises-db.ts";
 import { buildPrompt } from "./prompt-builder.ts";
-import { validateExerciseUids, EXERCISES_DB } from "./exercises-db.ts";
+import { GenerateWorkoutRequest, WorkoutProgram } from "./types.ts";
 
 const WORKOUT_SCHEMA = {
   type: "object",
@@ -133,11 +133,14 @@ async function saveProgramToDatabase(
 }
 
 Deno.serve(async (req) => {
+  console.log(`[generate-workout] ${req.method} ${req.url}`);
+
   const corsResponse = handleCors(req);
   if (corsResponse) return corsResponse;
 
   try {
     if (req.method !== "POST") {
+      console.log("[generate-workout] Rejected: method not allowed:", req.method);
       return new Response(
         JSON.stringify({ error: "Method not allowed" }),
         {
@@ -150,6 +153,7 @@ Deno.serve(async (req) => {
     // Auth check
     const authHeader = req.headers.get("Authorization");
     if (!authHeader) {
+      console.log("[generate-workout] Rejected: missing Authorization header");
       return new Response(
         JSON.stringify({ error: "Missing Authorization header" }),
         {
@@ -169,8 +173,8 @@ Deno.serve(async (req) => {
       data: { user },
       error: userError,
     } = await supabaseAdmin.auth.getUser(token);
-
     if (userError || !user) {
+      console.log("[generate-workout] Auth failed:", userError?.message ?? "no user");
       return new Response(
         JSON.stringify({ error: "Invalid token" }),
         {
@@ -179,6 +183,7 @@ Deno.serve(async (req) => {
         }
       );
     }
+    console.log("[generate-workout] Authenticated user:", user.id);
 
     const geminiApiKey = Deno.env.get("GEMINI_API_KEY");
     if (!geminiApiKey) {
@@ -186,8 +191,11 @@ Deno.serve(async (req) => {
     }
 
     const body: GenerateWorkoutRequest = await req.json();
+    console.log("[generate-workout] Request body: days=%d, split_type=%s, preferences=%s",
+      body.days, body.split_type, body.preferences ?? "none");
 
     if (!body.days || body.days < 1 || body.days > 7) {
+      console.log("[generate-workout] Validation failed: invalid days:", body.days);
       return new Response(
         JSON.stringify({ error: "days must be between 1 and 7" }),
         {
@@ -198,6 +206,7 @@ Deno.serve(async (req) => {
     }
 
     if (!body.split_type) {
+      console.log("[generate-workout] Validation failed: missing split_type");
       return new Response(
         JSON.stringify({ error: "split_type is required" }),
         {
@@ -219,25 +228,29 @@ Deno.serve(async (req) => {
 
     const prompt = buildPrompt(body.days, body.split_type, body.preferences);
 
-    console.log("Generating workout program...");
+    console.log("[generate-workout] Calling Gemini API...");
+    const startTime = Date.now();
     const result = await model.generateContent(prompt);
     const response = result.response;
     const programData: WorkoutProgram = JSON.parse(response.text());
+    console.log("[generate-workout] Gemini response received in %dms — program: %s, workouts: %d",
+      Date.now() - startTime, programData.program_name, programData.workouts.length);
 
     validateExerciseUids(programData.workouts);
+    console.log("[generate-workout] Exercise UIDs validated");
 
-    // Save to database
-    console.log("Saving program to database...");
+    console.log("[generate-workout] Saving program to database...");
     const programId = await saveProgramToDatabase(
       supabaseAdmin,
       user.id,
       programData,
       body
     );
+    console.log("[generate-workout] Program saved, id:", programId);
 
     const enrichedProgram = enrichProgramWithDetails(programData);
 
-    console.log("Workout program generated and saved successfully");
+    console.log("[generate-workout] Done — program %s created for user %s", programId, user.id);
 
     return new Response(
       JSON.stringify({
@@ -253,7 +266,8 @@ Deno.serve(async (req) => {
       }
     );
   } catch (error) {
-    console.error("Error generating workout:", error);
+    console.error("[generate-workout] Unhandled error:", (error as Error).message);
+    console.error("[generate-workout] Stack:", (error as Error).stack);
 
     return new Response(
       JSON.stringify({

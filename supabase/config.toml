@@ -404,6 +404,6 @@ entrypoint = "./functions/hello/index.ts"
 
 [functions.generate-workout]
 enabled = true
-verify_jwt = true
+verify_jwt = false
 import_map = "./functions/generate-workout/deno.json"
 entrypoint = "./functions/generate-workout/index.ts"
